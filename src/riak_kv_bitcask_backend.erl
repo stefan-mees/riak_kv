@@ -52,7 +52,7 @@
 
 -include_lib("bitcask/include/bitcask.hrl").
 
--define(MERGE_CHECK_INTERVAL, timer:minutes(3)).
+-define(MERGE_CHECK_INTERVAL, timer:minutes(9)).
 -define(API_VERSION, 1).
 -define(CAPABILITIES, [async_fold]).
 
@@ -88,6 +88,10 @@ capabilities(_, _) ->
 %% @doc Start the bitcask backend
 -spec start(integer(), config()) -> {ok, state()} | {error, term()}.
 start(Partition, Config) ->
+
+    <<A:32, B:32, C:32>> = crypto:rand_bytes(12),
+    random:seed(A, B, C),
+
     %% Get the data root directory
     case app_helper:get_prop_or_env(data_root, Config, bitcask) of
         undefined ->
@@ -102,7 +106,8 @@ start(Partition, Config) ->
                     case bitcask:open(filename:join(DataRoot, DataDir), BitcaskOpts) of
                         Ref when is_reference(Ref) ->
                             check_fcntl(),
-                            schedule_merge(Ref),
+                            FirstMergeMs = timer:minutes(3) + (random:uniform(18)*10000),
+                            schedule_merge(Ref, FirstMergeMs),
                             maybe_schedule_sync(Ref),
                             {ok, #state{ref=Ref,
                                         data_dir=DataDir,
@@ -493,8 +498,11 @@ maybe_schedule_sync(Ref) when is_reference(Ref) ->
 schedule_sync(Ref, SyncIntervalMs) when is_reference(Ref) ->
     riak_kv_backend:callback_after(SyncIntervalMs, Ref, {sync, SyncIntervalMs}).
 
+schedule_merge(Ref, MergeIntervalMs) when is_reference(Ref) ->
+    riak_kv_backend:callback_after(MergeIntervalMs, Ref, merge_check).
+
 schedule_merge(Ref) when is_reference(Ref) ->
-    riak_kv_backend:callback_after(?MERGE_CHECK_INTERVAL, Ref, merge_check).
+    schedule_merge(Ref, ?MERGE_CHECK_INTERVAL).
 
 %% @private
 get_data_dir(DataRoot, Partition) ->
